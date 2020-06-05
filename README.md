@@ -1,5 +1,5 @@
 # TypeInferenceAlgorithm
-This file consists of the files necessary to perform type inference on Prolog programs.
+This folder consists of the files necessary to perform type inference on Prolog programs.
 
 -- normalize.pl --
 
