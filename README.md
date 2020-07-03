@@ -27,3 +27,5 @@ Performs type inference. It can be separated in several steps: 1) term_expansion
 To run inference:
 1) typed_compile(file). where file is the file that contains the Prolog program to infer types for.
 2) see printed output.
+
+This inference algorithm in based on the type system published in https://arxiv.org/abs/1909.08232
