@@ -22,7 +22,7 @@ To run normalize:
 
 -- Inference.pl --
 
-Performs type inference. It can be separated in several steps: 1) term_expansion - transforms the normalized programs in a easier construct to use on the algorithms; 2) constraint_generation - generates constraints from the program; 3) constraint_solve - solves the generated constraints; 4) closure - may occur or not depending on the flag in the input program; 5) print_solution - pretty prints the solved constraints that represent the interesting types for each predicate.
+Performs type inference. It can be separated into several steps: 1) term_expansion - transforms the normalized programs in a easier construct to use on the algorithms; 2) constraint_generation - generates constraints from the program; 3) constraint_solve - solves the generated constraints; 4) simplification - simplifies the resulting type equations at several stages of the constraint resolution step ; 5) closure - may occur or not depending on the flag in the input program; 6) print_solution - pretty prints the solved constraints that represent the interesting types for each predicate.
 
 To run inference:
 1) typed_compile(file). where file is the file that contains the Prolog program to infer types for.
