@@ -271,7 +271,7 @@ constraint_gen(X,Data,Type,Env,Eq,Ineq) :- (
 					(Op = '<'; Op = '>'; Op = is; Op = '=<'; Op = '>=') ->
 										constraint_gen_args(Args,Data,Types,Envs,Eqs,Ineqs),
 										cross_prod(Envs,Env), gen_arith(Types,AritCons),
-										cup([AritCons|Eqs],Eq), cup(Ineqs,Ineq),
+										cup(Eqs,Eq), cup([AritCons|Ineqs],Ineq),
 										Type = bool ;
 
 					X = pred(P,Args) -> clause(cl(pred(P,Args1),Body)),
@@ -408,7 +408,7 @@ occurs_in(H,[_|Rest]) :- occurs_in(H,Rest).
 % Generates equality constraints with num on the right-hand side for each variable in the list
 
 gen_arith([],[]).
-gen_arith([T|Ts],[eq(T,sum([basetype(int),basetype(float)]))|Eqs]) :-
+gen_arith([T|Ts],[subt(T,sum([basetype(int),basetype(float)]))|Eqs]) :-
 					gen_arith(Ts,Eqs).
 
 
@@ -658,6 +658,7 @@ case5([C|Cs],C1) :- !, case5(Cs,C1).
 
 % occur_check
 
+occur_check(T,T1) :- var(T1), T == T1, !, fail.
 occur_check(T,tvar(P,A,N)) :- T == tvar(P,A,N), !,fail.
 occur_check(T,basetype(K)) :- T == basetype(K), !, fail.
 occur_check(T1,T2) :- not(var(T2)), T2 =.. [T, F, Args], occur_check_args(T1,Args), !.
@@ -691,41 +692,71 @@ in_solved_form([C|Cs]) :- C = eq(X,Y), !, X = tvar(P,A,N), in_solved_form(Cs).
 
 simplify([],Output,Output).
 simplify([eq(A,B)|Rest],List,Output) :-
-					(step_1(B,Bprime);step0(B,Bprime); step1(A,B,Bprime); step2(A,B,List,Bprime); step3(B,Bprime);
-					step4(B,Bprime); step5(B,Bprime,ToAdd)) ->
-					replace(eq(A,B),eq(A,Bprime),List,TempList), (ToAdd = []; true),
+					(step_1(B,Bprime), TList = List;
+					step0(B,Bprime), TList = List;
+					step1(A,B,Bprime), TList = List;
+					step2(A,B,List,Bprime), TList = List;
+					step3(B,Bprime), TList = List;
+					step4(B,Bprime), TList = List;
+					step5(B,Bprime,ToAdd), TList = List;
+					step6(A,B,List,TList), Bprime = B;
+					step7(A,B,List,TList), Bprime = B, Flag = true) ->
+					(Bprime == B, TempList = TList ; replace(eq(A,B),eq(A,Bprime),TList,TempList)),
+					(ToAdd = []; true),
 					append(ToAdd,TempList,NList), append(ToAdd,Rest,NRest),
-					(Bprime == B -> simplify(NRest,NList,Output);
+					(Flag == true -> simplify(NList,NList,TOutput), Output = [eq(A,B)|TOutput];
+					Bprime == B -> simplify(NRest,NList,Output);
 					simplify([eq(A,Bprime)|NRest],NList,Output)).
 simplify([eq(A,B)|Rest],List,Output) :- simplify(Rest,List,Output).
 
 step_1(X,X) :- var(X),!, fail.
-step_1(sum([X],X):- !.
+step_1(sum([X]),X):- !.
 
 step0(X,X) :- var(X),!, fail.
 step0(sum(List),Final) :- list_has_sum(List,List1,TempList), append(TempList,List1,NList), Final = sum(NList).
 
-step1(_,X,X) :- var(X).
+step1(_,X,X) :- var(X),!, fail.
 step1(A,sum(List),Final) :- occurs_in(A,List) -> remove_from_list(A,List,NList), Final = sum(NList).
 
-step2(_,X,_,X) :- var(X).
+step2(_,X,_,X) :- var(X), !, fail.
 step2(A,Type,Defs,Final) :- Type =.. [tvar| _], get_definition(Type,Defs,Def),
 					replace_in_def(Def,Type,A,Final).
 step2(A,sum(List),Defs,Final) :-
 					list_has_type(List,A,Type,TempList), get_definition(Type,Defs,Def),
 					replace_in_def(Def,Type,A,NDef), append([NDef],TempList,NList), Final = sum(NList).
 
-step3(X,X) :- var(X).
+step3(X,X) :- var(X), !, fail.
 step3(sum(List),Final) :- list_has_repeated(List,NList), Final = sum(NList).
 
-step4(X,X) :- var(X).
+step4(X,X) :- var(X), !, fail.
 step4(sum(List),Final) :- list_has_cons(List,Oc1,Oc2,TempList), sum_oc_pointwise(Oc1,Oc2,FinalOc),
 					Final = sum([FinalOc|TempList]).
 
-step5(X,X,[]) :- var(X).
+step5(X,X,[]) :- var(X), !, fail.
+step5(Term,Final,ToAdd) :-
+					Term =.. [FORT, Name, Args],
+					list_has_sum_in_cons(Args,ToAdd,NArgs),
+					Final =.. [FORT,Name,NArgs].
 step5(sum(List),Final,ToAdd) :-
-					list_has_cons_with_sums(List,NOccurence,ToAdd,TempList), NOccurence =.. [func, F, Args],
+					list_has_cons_with_sums(List,NOccurence,ToAdd,TempList),
+					NOccurence =.. [func, F, Args],
 					Final = sum([NOccurence|TempList]).
+
+step6(A,B,List,TList) :-
+					remove_constraint(eq(A,B),List,TempList), any_other_same_body(B,TempList,eq(C,D)),
+					(A =.. [tvar, N, N, N] -> replace_in_constraints(A,C,TempList,TList);
+					C =.. [tvar, N, N, N] -> remove_constraint(eq(C,B),TempList,TempList2),
+										replace_in_constraints(C,A,TempList2,TempList3),
+										TList=[eq(A,B)|TempList2]).
+
+step7(A,B,List,TList) :-
+					(var(B);
+					B =.. [basetype | _];
+					B =.. [tnam, _, Args], not(occur_check_args(A,Args));
+					B =.. [func, _, Args], not(occur_check_args(A,Args))) ->
+					A =.. [tvar, N, N, N], !,
+					remove_constraint(eq(A,B),List,TempList), replace_in_constraints(A,B,TempList,TList).
+
 
 % Auxiliary functions
 
@@ -741,6 +772,7 @@ list_has_type([Head|Rest],A,Head,Rest) :- not(var(Head)), Head \= A, Head =.. [t
 list_has_type([Head|Rest],A,Not,[Head|Others]) :- list_has_type(Rest,A,Not,Others).
 
 replace_in_def(sum(List),Type,A,sum(NList)) :- replace_type_by_def(Type,A,List,NList).
+replace_in_def(X,Type,A,Y) :- replace_type_by_def(Type,A,[X],[Y]).
 
 replace_type_by_def(Type,ToSub,[],[]).
 replace_type_by_def(Type,ToSub,[A|As],[B|Bs]) :- (
@@ -780,12 +812,30 @@ list_has_repeated([A|Rest],[A|Others]) :- list_has_repeated(Rest,Others).
 list_has_cons_with_sums([A|As],B,T,As) :-
 					not(var(A)), A =.. [func, F, List], list_has_sum_in_cons(List,T,NList),!,
 					B =.. [func, F, NList].
-list_has_cons_with_sums([A|As],List,T,[A|Bs]) :- list_has_cons_with_sums(As,List,Bs).
+list_has_cons_with_sums([A|As],List,T,[A|Bs]) :- list_has_cons_with_sums(As,List,T,Bs).
 
 list_has_sum_in_cons([A|As],ToAdd,[T|As]) :-
 					not(var(A)), A = sum(List), gen_fresh_type(1,[T]), !, ToAdd = [eq(T,A)].
 list_has_sum_in_cons([A|As],ToAdd,[A|Bs]) :-
 					list_has_sum_in_cons(As,ToAdd,Bs).
+
+replace_in_constraints(_,_,[],[]).
+replace_in_constraints(A,B,[eq(X,C)|Cs],[eq(X,D)|Ds]) :-
+					replace_in_a_right(A,B,C,D), replace_in_constraints(A,B,Cs,Ds).
+
+replace_in_a_right(A,B,C,D) :-
+					var(C) -> D = C;
+					C == A -> D = B;
+					C =.. [basetype | _] -> D = C;
+					C =.. [tvar | _] -> D = C;
+					C =.. [FORT, Name, Args] -> replace_in_args(A,B,Args,NArgs), D =.. [FORT,Name,NArgs];
+					C = sum(List) -> replace_in_args(A,B,List,NList), D = sum(NList).
+
+replace_in_args(A,B,[],[]).
+replace_in_args(A,B,[C|Cs],[D|Ds]) :- replace_in_a_right(A,B,C,D), replace_in_args(A,B,Cs,Ds).
+
+any_other_same_body(B,[eq(A,C)|Rest],eq(A,C)) :- C == B, !.
+any_other_same_body(B,[eq(A,C)|Rest],X) :- any_other_same_body(B,Rest,X).
 
 
 
@@ -913,13 +963,14 @@ ineq_algorithm(Ineq,BoundDefinitions,SolvedIneq,FinalDefinitions) :-
 										ineq_algorithm(FinalIneq,BoundDefinitions,SolvedIneq,FinalDefinitions);
 					icase6(Ineq,Constraint) -> remove_constraint(Constraint,Ineq,NeqIneq),
 										Constraint =.. [subt, VAR, T], (
-										already_compared(VAR,T) -> FinalIneq = NeqIneq;
+										already_compared((VAR,T)) -> FinalIneq = NeqIneq;
 										true -> get_definition(VAR,BoundDefinitions,Def),
 										Sub =.. [subt, Def, T], append([Sub],NeqIneq,FinalIneq),
-										assert(already_compared(VAR,T))), 
+										assert(already_compared((VAR,T)))), 
 										ineq_algorithm(FinalIneq,BoundDefinitions,SolvedIneq,FinalDefinitions);
 					icase7(Ineq,Var,Constraints) -> remove_all_constraints(Constraints,Ineq,NeqIneq),
-										get_all_lefts(Constraints,Lefts), Var = sum(Lefts),
+										get_all_lefts(Constraints,Lefts),
+										(length(Lefts,1) -> Lefts = [Var]; true -> Var = sum(Lefts)),
 										simplify(BoundDefinitions,BoundDefinitions,NBD),
 										ineq_algorithm(NeqIneq,NBD,SolvedIneq,FinalDefinitions);
 					icase8(Ineq,Constraint) -> remove_constraint(Constraint,Ineq,NeqIneq),
@@ -929,7 +980,7 @@ ineq_algorithm(Ineq,BoundDefinitions,SolvedIneq,FinalDefinitions) :-
 										ineq_algorithm(FinalIneq,BoundDefinitions,SolvedIneq,FinalDefinitions);
 					icase9(Ineq,Constraint) -> remove_constraint(Constraint,Ineq,NeqIneq),
 										Constraint =.. [subt, T, VAR], (
-										already_compared(T,VAR) -> FinalIneq = NeqIneq;
+										already_compared((T,VAR)) -> FinalIneq = NeqIneq;
 										true -> get_definition(VAR,BoundDefinitions,Def),
 										Sub =.. [subt, T, Def], append([Sub],NeqIneq,FinalIneq),
 										assert(already_compared((T,VAR)))),
@@ -963,7 +1014,7 @@ icase6([subt(NT,T)|Rest],Constraint) :-
 
 icase7([subt(T,VAR)|Rest],VAR,List) :-
 					(var(VAR), other_ineqs_left(VAR,Rest,All) -> List = [subt(T,VAR)|All];
-					true -> icase7(Rest,Constraint)).
+					true -> icase7(Rest,VAR,Constraint)).
 
 icase8([subt(T,S)|Rest],Constraint) :-
 					(S =.. [sum, Args] -> Constraint = subt(T,S);
@@ -1225,11 +1276,11 @@ is_in_constraint(F,B) :- (
 					var(B) -> fail;
 					B = [H | T] -> (is_in_constraint(F,H); is_in_constraint(F,T));
 					B = [] -> fail;
-					B =.. [TYPEORFUNC, F, _] -> true;
 					B =.. [tvar | _] -> fail;
 					B =.. [basetype, _] -> fail;
 					B = self -> fail;
-					B =.. [sum, Summands] -> is_in_constraint(F,Summands)).
+					B =.. [sum, Summands]-> is_in_constraint(F,Summands);
+					B =.. [_, _, _] -> true).
 
 remove_vars_from_list([],[]).
 remove_vars_from_list([H|T],R) :- var(H), !, remove_vars_from_list(T,R).
@@ -1252,19 +1303,20 @@ apply_substitutions(Vars,Domains,[eq(A,B)|Ts],[eq(A,C)|NTs]) :-
 
 apply_substitutions_to_a_type(Vars,Domains,B,C) :-
 					(var(B) ->find_in_substitutions(B,Vars,Domains,C);
-					B =.. [tvar, K] -> find_in_substitutions(B,Vars,Domains,Domain),
+					B =.. [tvar, N, N, N] -> C = B;
+					B =.. [tvar, _, _, _] -> find_in_substitutions(B,Vars,Domains,Domain),
 										(do_sum(Domain,C); C = B);
 					B =.. [func,F,Args] -> apply_substitutions_to_args(Vars,Domains,Args,NArgs),
 										C =.. [func, F, NArgs];
-					B =.. [basetype, Base] -> C = B;
+					B =.. [basetype, _] -> C = B;
 					B = self -> C = B;
-					B =.. [tvar, N, N, N] -> C = B;
+
 					B =.. [tnam, Name, Args] -> apply_substitutions_to_args(Vars,Domains,Args,NArgs),
 										C =.. [tnam, Name, NArgs];
 					B =.. [sum, Summands] -> apply_substitutions_to_args(Vars,Domains,Summands,NSummands),
 										join_sums(NSummands,C)).
 
-apply_substitutions_to_args(Vars,Domains,[],[]).
+apply_substitutions_to_args(_,_,[],[]).
 apply_substitutions_to_args(Vars,Domains,[A|As],[B|Bs]) :-
 					apply_substitutions_to_a_type(Vars,Domains,A,B),
 					apply_substitutions_to_args(Vars,Domains,As,Bs).
@@ -1347,7 +1399,7 @@ search_headvarstypes([],_,[]).
 search_headvarstypes([V|Vs],Env,[T|Ts]) :- search_headvartype(V,Env,T), search_headvarstypes(Vs,Env,Ts).
 
 search_headvartype(V,[(V,T)|_],T).
-search_headvartype(V,[(NV,NT)|Rest],T) :- search_headvartype(V,Rest,T).
+search_headvartype(V,[(_,_)|Rest],T) :- search_headvartype(V,Rest,T).
 
 print_output(P,Solution,Types) :-
 					write(P), write(' :: '), print_types(Types), nl,
@@ -1357,7 +1409,7 @@ print_types([]).
 print_types([T|Ts]) :- (
 					var(T) -> write(T);
 					T =.. [sum, List] -> print_sum(List);
-					T =.. [func, F, Args] -> print_f(T);
+					T =.. [func, _, _] -> print_f(T);
 					T =.. [tvar, P, A, N] -> (integer(P) -> write('$VAR'(P));
 											true -> write(P), write(A), write('/'), write(N));
 					T =.. [basetype, Base] -> write(Base);
@@ -1373,15 +1425,15 @@ print_constraints([T|Ts],Solution,Done) :-
 					print_constraints(Final,Solution,[T|Done]).
 
 search_constraints(T,[eq(T,C)|_],eq(T,C)) :- !.
-search_constraints(T,[eq(T1,C1)|Rest],C) :- T1 \= T, !, search_constraints(T,Rest,C).
+search_constraints(T,[eq(T1,_)|Rest],C) :- T1 \= T, !, search_constraints(T,Rest,C).
 
 new_types_on(B,List) :-
 					var(B) -> List = [];
-					B =.. [basetype, Base] -> List = [];
-					B =.. [tvar, P, A, N] -> List = [B];
+					B =.. [basetype, _] -> List = [];
+					B =.. [tvar, _, _, _] -> List = [B];
 					B =.. [sum, Lista] -> new_types_on_each(Lista,List);
-					B =.. [tnam, Name, Args] -> List = [];
-					B =.. [func, F, Args] -> new_types_on_each(Args,List).
+					B =.. [tnam, _, _] -> List = [];
+					B =.. [func, _, Args] -> new_types_on_each(Args,List).
 
 new_types_on_each([],[]).
 new_types_on_each([A|As],List) :- new_types_on(A,L), new_types_on_each(As,Ls), append(L,Ls,List).
@@ -1401,7 +1453,7 @@ print_constraint(eq(A1,B1)) :-
 										true -> write(P2), write(A2), write('/'), write(N2));
 					B1 = sum(List) -> print_sum(List);
 					B1 =.. [tnam, Name, Args] -> write(Name), write('('), print_args(Args), write(')');
-					B1 =.. [func, F, Args] -> print_f(B1)), nl.
+					B1 =.. [func, _, _] -> print_f(B1)), nl.
 
 print_sum([A]) :- !, print_types([A]).
 print_sum([A|B]) :- print_types([A]), write(' + '), print_sum(B).
